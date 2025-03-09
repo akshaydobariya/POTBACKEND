@@ -41,6 +41,22 @@ app.use('/api/inventory', inventoryRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 
+// Add this before your other routes
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Inventory Management API is running',
+    version: '1.0.0',
+    endpoints: {
+      auth: '/api/auth',
+      users: '/api/users',
+      inventory: '/api/inventory',
+      sales: '/api/sales',
+      dashboard: '/api/dashboard'
+    }
+  });
+});
+
 // Error handler
 app.use(errorHandler);
 
