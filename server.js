@@ -1,17 +1,10 @@
-if (process.env.NODE_ENV !== 'production') {
-  require('dotenv').config();
-}
+// Modify your server.js to export the Express app for serverless environments
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
-const mongoose = require('mongoose');
-const { createServer } = require('http');
-const { Server } = require('socket.io');
-const path = require('path');
 const cookieParser = require('cookie-parser');
 const errorHandler = require('./middleware/error');
 const connectDB = require('./config/db');
-const colors = require('colors');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -20,16 +13,13 @@ const inventoryRoutes = require('./routes/inventory');
 const salesRoutes = require('./routes/sales.routes');
 const dashboardRoutes = require('./routes/dashboard.routes');
 
+// Load env vars
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
+
 // Initialize express app
 const app = express();
-const httpServer = createServer(app);
-const io = new Server(httpServer, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    credentials: true
-  }
-});
 
 // Connect to MongoDB
 connectDB();
@@ -44,9 +34,6 @@ app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
 app.use(cookieParser());
 
-// Socket.io middleware
-app.set('io', io);
-
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -54,42 +41,22 @@ app.use('/api/inventory', inventoryRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 
-// Serve static assets in production
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../client/build')));
-  
-  app.get('*', (req, res) => {
-    res.sendFile(path.resolve(__dirname, '../client', 'build', 'index.html'));
+// Error handler
+app.use(errorHandler);
+
+// Start server if not in serverless environment
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
   });
 }
 
-// Set static folder
-app.use(express.static(path.join(__dirname, 'public')));
-
-app.use(errorHandler);
-
-// Socket.io connection
-io.on('connection', (socket) => {
-  console.log('New client connected');
-  
-  socket.on('disconnect', () => {
-    console.log('Client disconnected');
-  });
-});
-
-// Start server
-const PORT = process.env.PORT || 5000;
-httpServer.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
-
 // Handle unhandled promise rejections
-process.on('unhandledRejection', (err, promise) => {
+process.on('unhandledRejection', (err) => {
   console.log(`Error: ${err.message}`);
   // Don't exit the process on Vercel
-  if (process.env.NODE_ENV !== 'production') {
-    httpServer.close(() => process.exit(1));
-  }
 });
 
-module.exports = { app, httpServer }; 
+// Export for serverless
+module.exports = app; 
