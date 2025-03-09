@@ -57,6 +57,53 @@ app.get('/', (req, res) => {
   });
 });
 
+// Debug route to check if API routes are registered
+app.get('/api/routes', (req, res) => {
+  const routes = [];
+  
+  // Get registered routes
+  app._router.stack.forEach((middleware) => {
+    if (middleware.route) {
+      // Routes registered directly on the app
+      routes.push({
+        path: middleware.route.path,
+        methods: Object.keys(middleware.route.methods)
+      });
+    } else if (middleware.name === 'router') {
+      // Router middleware
+      middleware.handle.stack.forEach((handler) => {
+        if (handler.route) {
+          const path = handler.route.path;
+          const baseUrl = middleware.regexp.toString()
+            .replace('\\^', '')
+            .replace('\\/?(?=\\/|$)', '')
+            .replace(/\\\//g, '/');
+          
+          routes.push({
+            path: baseUrl + path,
+            methods: Object.keys(handler.route.methods)
+          });
+        }
+      });
+    }
+  });
+  
+  res.json({
+    success: true,
+    count: routes.length,
+    routes
+  });
+});
+
+// Add a catch-all route for API requests that aren't handled
+app.all('/api/*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `API route not found: ${req.method} ${req.originalUrl}`,
+    availableRoutes: '/api/routes'
+  });
+});
+
 // Error handler
 app.use(errorHandler);
 

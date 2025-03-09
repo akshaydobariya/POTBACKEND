@@ -9,15 +9,18 @@
     "routes": [
       {
         "src": "/api/(.*)",
-        "dest": "/server.js"
+        "dest": "server.js"
       },
       {
         "src": "/(.*)",
-        "dest": "/server.js"
+        "dest": "server.js"
       }
     ],
     "env": {
-      "NODE_ENV": "production"
+      "NODE_ENV": "production",
+      "MONGO_URI": "mongodb+srv://Akshay:Akshay1234@akshay.kbr6o.mongodb.net/inventory?retryWrites=true&w=majority&appName=Akshay",
+      "JWT_SECRET": "your_jwt_secret",
+      "JWT_EXPIRE": "30d"
     }
   }
   
