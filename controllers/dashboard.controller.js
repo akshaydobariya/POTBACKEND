@@ -1,85 +1,139 @@
 const asyncHandler = require('../middleware/async');
 const ErrorResponse = require('../utils/errorResponse');
 const Sale = require('../models/Sale');
-const InventoryItem = require('../models/InventoryItem.model');
+const Inventory = require('../models/Inventory');
 const User = require('../models/User');
 const Notification = require('../models/Notification.model');
 
 // @desc    Get dashboard summary
 // @route   GET /api/dashboard/summary
 // @access  Private
-exports.getSummary = async (req, res) => {
+exports.getSummary = asyncHandler(async (req, res, next) => {
   try {
-    // Get total inventory value
-    const inventoryItems = await InventoryItem.find();
+    // Get inventory statistics
+    const inventoryItems = await Inventory.find();
     const totalInventoryValue = inventoryItems.reduce(
       (total, item) => total + item.price * item.quantity,
       0
     );
-
-    // Get total inventory items
     const totalItems = inventoryItems.length;
-
-    // Get low stock items count
-    const lowStockCount = inventoryItems.filter(
-      item => item.quantity <= item.minimumStockLevel
-    ).length;
-
+    const lowStockItems = inventoryItems.filter(
+      item => item.quantity <= (item.reorderLevel || 5)
+    );
+    const lowStockCount = lowStockItems.length;
+    const outOfStockCount = inventoryItems.filter(item => item.quantity === 0).length;
+    
+    // Get categories
+    const categories = [...new Set(inventoryItems.map(item => item.category))];
+    
+    // Get sales statistics
+    const sales = await Sale.find().populate('items.product');
+    const totalSales = sales.length;
+    const totalRevenue = sales.reduce((total, sale) => total + sale.total, 0);
+    
     // Get today's sales
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const todaySales = await Sale.find({
-      createdAt: { $gte: today }
-    });
-    const todaySalesTotal = todaySales.reduce(
-      (total, sale) => total + sale.total,
-      0
-    );
-
+    const todaySales = sales.filter(sale => new Date(sale.createdAt) >= today);
+    const todayRevenue = todaySales.reduce((total, sale) => total + sale.total, 0);
+    
     // Get this month's sales
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    const monthSales = await Sale.find({
-      createdAt: { $gte: firstDayOfMonth }
+    const monthSales = sales.filter(sale => new Date(sale.createdAt) >= firstDayOfMonth);
+    const monthRevenue = monthSales.reduce((total, sale) => total + sale.total, 0);
+    
+    // Get user statistics
+    const users = await User.find();
+    const totalUsers = users.length;
+    const userRoles = users.reduce((acc, user) => {
+      acc[user.role] = (acc[user.role] || 0) + 1;
+      return acc;
+    }, {});
+    
+    // Get recent sales (last 5)
+    const recentSales = await Sale.find()
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .populate('items.product');
+    
+    // Get top selling products
+    const productSales = {};
+    sales.forEach(sale => {
+      sale.items.forEach(item => {
+        const productId = item.product._id || item.product;
+        if (!productSales[productId]) {
+          productSales[productId] = {
+            quantity: 0,
+            revenue: 0,
+            name: item.product.name || 'Unknown Product'
+          };
+        }
+        productSales[productId].quantity += item.quantity;
+        productSales[productId].revenue += item.price * item.quantity;
+      });
     });
-    const monthSalesTotal = monthSales.reduce(
-      (total, sale) => total + sale.total,
-      0
-    );
-
-    // Get unread notifications count
-    const unreadNotificationsCount = await Notification.countDocuments({
-      read: false
-    });
-
+    
+    const topProducts = Object.keys(productSales)
+      .map(key => ({
+        id: key,
+        name: productSales[key].name,
+        quantity: productSales[key].quantity,
+        revenue: productSales[key].revenue
+      }))
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 5);
+    
     res.status(200).json({
       success: true,
       data: {
-        totalInventoryValue,
-        totalItems,
-        lowStockCount,
-        todaySalesCount: todaySales.length,
-        todaySalesTotal,
-        monthSalesCount: monthSales.length,
-        monthSalesTotal,
-        unreadNotificationsCount
+        inventory: {
+          totalItems,
+          totalValue: totalInventoryValue,
+          lowStockCount,
+          outOfStockCount,
+          categories: categories.length,
+          lowStockItems: lowStockItems.map(item => ({
+            id: item._id,
+            name: item.name,
+            quantity: item.quantity,
+            reorderLevel: item.reorderLevel || 5
+          }))
+        },
+        sales: {
+          totalSales,
+          totalRevenue,
+          todaySales: todaySales.length,
+          todayRevenue,
+          monthSales: monthSales.length,
+          monthRevenue,
+          recentSales: recentSales.map(sale => ({
+            id: sale._id,
+            customer: sale.customer,
+            total: sale.total,
+            date: sale.createdAt,
+            items: sale.items.length
+          })),
+          topProducts
+        },
+        users: {
+          totalUsers,
+          roles: userRoles
+        }
       }
     });
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
+  } catch (error) {
+    console.error('Error getting dashboard summary:', error);
+    return next(new ErrorResponse('Error getting dashboard summary', 500));
   }
-};
+});
 
 // @desc    Get low stock items
 // @route   GET /api/dashboard/low-stock
 // @access  Private
 exports.getLowStockItems = async (req, res) => {
   try {
-    const lowStockItems = await InventoryItem.find({
-      $expr: { $lte: ['$quantity', '$minimumStockLevel'] }
+    const lowStockItems = await Inventory.find({
+      $expr: { $lte: ['$quantity', '$reorderLevel'] }
     }).sort('quantity');
 
     res.status(200).json({
@@ -116,7 +170,7 @@ exports.getTopSellingItems = async (req, res) => {
     ]);
 
     // Populate item details
-    const populatedItems = await InventoryItem.populate(topSellingItems, {
+    const populatedItems = await Inventory.populate(topSellingItems, {
       path: '_id',
       select: 'name category price'
     });
@@ -258,58 +312,182 @@ exports.markAllNotificationsAsRead = async (req, res) => {
 // @desc    Get dashboard data
 // @route   GET /api/dashboard
 // @access  Private
-exports.getDashboardData = async (req, res) => {
+exports.getDashboardData = asyncHandler(async (req, res, next) => {
   try {
+    // Get inventory statistics
+    const inventoryItems = await Inventory.find();
+    const totalInventoryValue = inventoryItems.reduce(
+      (total, item) => total + item.price * item.quantity,
+      0
+    );
+    const totalItems = inventoryItems.length;
+    const lowStockCount = inventoryItems.filter(
+      item => item.quantity <= (item.reorderLevel || 5)
+    ).length;
+    
+    // Get sales statistics
+    const sales = await Sale.find();
+    const totalSales = sales.length;
+    const totalRevenue = sales.reduce((total, sale) => total + sale.total, 0);
+    
+    // Get today's sales
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todaySales = sales.filter(sale => new Date(sale.createdAt) >= today);
+    const todayRevenue = todaySales.reduce((total, sale) => total + sale.total, 0);
+    
+    // Get this month's sales
+    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const monthSales = sales.filter(sale => new Date(sale.createdAt) >= firstDayOfMonth);
+    const monthRevenue = monthSales.reduce((total, sale) => total + sale.total, 0);
+    
+    // Get user statistics
+    const users = await User.find();
+    const totalUsers = users.length;
+    
     res.status(200).json({
       success: true,
       data: {
-        totalInventory: 0,
-        lowStockItems: 0,
-        totalSales: 0,
-        monthlySales: []
+        inventory: {
+          totalItems,
+          totalValue: totalInventoryValue,
+          lowStockCount
+        },
+        sales: {
+          totalSales,
+          totalRevenue,
+          todaySales: todaySales.length,
+          todayRevenue,
+          monthSales: monthSales.length,
+          monthRevenue
+        },
+        users: {
+          totalUsers
+        }
       }
     });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
+  } catch (error) {
+    console.error('Error getting dashboard data:', error);
+    return next(new ErrorResponse('Error getting dashboard data', 500));
   }
-};
+});
 
 // @desc    Get sales by period
 // @route   GET /api/dashboard/sales-by-period
 // @access  Private
-exports.getSalesByPeriod = async (req, res) => {
+exports.getSalesByPeriod = asyncHandler(async (req, res, next) => {
   try {
+    const { period = 'week' } = req.query;
+    let startDate;
+    const endDate = new Date();
+    const today = new Date();
+    
+    // Calculate start date based on period
+    switch (period) {
+      case 'week':
+        startDate = new Date(today);
+        startDate.setDate(today.getDate() - 7);
+        break;
+      case 'month':
+        startDate = new Date(today);
+        startDate.setMonth(today.getMonth() - 1);
+        break;
+      case 'year':
+        startDate = new Date(today);
+        startDate.setFullYear(today.getFullYear() - 1);
+        break;
+      default:
+        startDate = new Date(today);
+        startDate.setDate(today.getDate() - 7);
+    }
+    
+    // Get sales within the period
+    const sales = await Sale.find({
+      createdAt: { $gte: startDate, $lte: endDate }
+    });
+    
+    // Group sales by date
+    const salesByDate = {};
+    sales.forEach(sale => {
+      const date = new Date(sale.createdAt).toISOString().split('T')[0];
+      if (!salesByDate[date]) {
+        salesByDate[date] = {
+          count: 0,
+          revenue: 0
+        };
+      }
+      salesByDate[date].count += 1;
+      salesByDate[date].revenue += sale.total;
+    });
+    
+    // Convert to array for easier consumption by frontend
+    const salesData = Object.keys(salesByDate).map(date => ({
+      date,
+      count: salesByDate[date].count,
+      revenue: salesByDate[date].revenue
+    })).sort((a, b) => new Date(a.date) - new Date(b.date));
+    
     res.status(200).json({
       success: true,
-      data: []
+      data: salesData
     });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
+  } catch (error) {
+    console.error('Error getting sales by period:', error);
+    return next(new ErrorResponse('Error getting sales by period', 500));
   }
-};
+});
 
 // @desc    Get inventory status
 // @route   GET /api/dashboard/inventory-status
 // @access  Private
-exports.getInventoryStatus = async (req, res) => {
+exports.getInventoryStatus = asyncHandler(async (req, res, next) => {
   try {
+    const inventoryItems = await Inventory.find();
+    
+    // Group items by category
+    const categoryCounts = {};
+    inventoryItems.forEach(item => {
+      if (!categoryCounts[item.category]) {
+        categoryCounts[item.category] = {
+          count: 0,
+          value: 0,
+          lowStock: 0
+        };
+      }
+      categoryCounts[item.category].count += 1;
+      categoryCounts[item.category].value += item.price * item.quantity;
+      if (item.quantity <= (item.reorderLevel || 5)) {
+        categoryCounts[item.category].lowStock += 1;
+      }
+    });
+    
+    // Convert to array for easier consumption by frontend
+    const categoryData = Object.keys(categoryCounts).map(category => ({
+      category,
+      count: categoryCounts[category].count,
+      value: categoryCounts[category].value,
+      lowStock: categoryCounts[category].lowStock
+    }));
+    
     res.status(200).json({
       success: true,
-      data: []
+      data: {
+        categories: categoryData,
+        totalItems: inventoryItems.length,
+        totalValue: inventoryItems.reduce(
+          (total, item) => total + item.price * item.quantity,
+          0
+        ),
+        lowStockCount: inventoryItems.filter(
+          item => item.quantity <= (item.reorderLevel || 5)
+        ).length,
+        outOfStockCount: inventoryItems.filter(
+          item => item.quantity === 0
+        ).length
+      }
     });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
+  } catch (error) {
+    console.error('Error getting inventory status:', error);
+    return next(new ErrorResponse('Error getting inventory status', 500));
   }
-}; 
+}); 
