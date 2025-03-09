@@ -106,6 +106,30 @@ app.all('/api/*', (req, res) => {
   });
 });
 
+// Add cache control middleware
+app.use((req, res, next) => {
+  // Set cache control headers for GET requests
+  if (req.method === 'GET') {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
+  next();
+});
+
+// Add CORS preflight handling
+app.options('*', cors());
+
+// Add request logging middleware
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url}`);
+  console.log('Headers:', req.headers);
+  if (req.body && Object.keys(req.body).length > 0) {
+    console.log('Body:', req.body);
+  }
+  next();
+});
+
 // Error handler
 app.use(errorHandler);
 
