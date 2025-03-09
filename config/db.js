@@ -5,7 +5,10 @@ const connectDB = async () => {
   try {
     const conn = await mongoose.connect(process.env.MONGO_URI, {
       useNewUrlParser: true,
-      useUnifiedTopology: true
+      useCreateIndex: true,
+      useFindAndModify: false,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000 // Add timeout for Vercel
     });
 
     console.log(`MongoDB Connected: ${conn.connection.host}`.cyan.underline.bold);
@@ -16,7 +19,10 @@ const connectDB = async () => {
     
   } catch (error) {
     console.error(`Error: ${error.message}`.red);
-    process.exit(1);
+    // Don't exit the process on Vercel
+    if (process.env.NODE_ENV !== 'production') {
+      process.exit(1);
+    }
   }
 };
 

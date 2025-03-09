@@ -1,4 +1,6 @@
-require('dotenv').config();
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
@@ -83,9 +85,11 @@ httpServer.listen(PORT, () => {
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err, promise) => {
-  console.log(`Error: ${err.message}`.red);
-  // Close server & exit process
-  httpServer.close(() => process.exit(1));
+  console.log(`Error: ${err.message}`);
+  // Don't exit the process on Vercel
+  if (process.env.NODE_ENV !== 'production') {
+    httpServer.close(() => process.exit(1));
+  }
 });
 
 module.exports = { app, httpServer }; 
