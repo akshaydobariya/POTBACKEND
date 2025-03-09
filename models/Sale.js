@@ -53,10 +53,4 @@ const SaleSchema = new mongoose.Schema({
   }
 });
 
-// Calculate total before saving
-SaleSchema.pre('save', function(next) {
-  this.total = this.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  next();
-});
-
 module.exports = mongoose.model('Sale', SaleSchema); 
